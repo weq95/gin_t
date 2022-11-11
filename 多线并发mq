@@ -1,0 +1,54 @@
+use std::cell::RefCell;
+use std::fmt::Debug;
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::thread::JoinHandle;
+
+pub trait Message {
+    type Target;
+
+    fn send(&self, msg: Self::Target);
+}
+
+#[derive(Clone)]
+struct MsgQueue<T: Debug> {
+    msg_cache: Arc<Mutex<RefCell<Vec<T>>>>,
+}
+
+impl<T> Message for MsgQueue<T> where T: Debug {
+    type Target = T;
+
+    fn send(&self, msg: Self::Target) {
+        self.msg_cache.lock().unwrap().borrow_mut().push(msg);
+    }
+}
+
+impl<T: Debug> MsgQueue<T> {
+    fn print(&self) {
+        println!("{:?}", self.msg_cache.try_lock().unwrap());
+    }
+}
+
+fn main() {
+    let mq = MsgQueue {
+        msg_cache: Arc::new(Mutex::new(RefCell::new(vec![]))),
+    };
+
+    let mut arr: Vec<JoinHandle<()>> = Vec::new();
+    for i in 0..10 {
+        let mq_cloned = mq.clone();
+
+        let handle = thread::spawn(move || {
+            mq_cloned.send(i * 2)
+        });
+
+        arr.push(handle);
+    }
+
+
+    for _i in arr {
+        _i.join().unwrap();
+    }
+
+    mq.print();
+}
