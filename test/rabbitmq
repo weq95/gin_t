@@ -1,0 +1,94 @@
+package main
+
+import (
+	"encoding/json"
+	"github.com/streadway/amqp"
+	"godemo/rabbitmq/util"
+	"log"
+	"time"
+)
+
+var NormalQueue = "order_normal-queue"       //正常队列
+var NormalExchange = "order_normal-exchange" //正常交换机
+var NormalRoutingKey = "order_normal-key"    //正常路由key
+
+var DeadQueue = "order_dead-queue"       //死信队列
+var DeadExchange = "order_dead-exchange" //死信交换机
+var DeadRoutingKey = "order_dead-key"    //死信路由key
+
+func main() {
+	// # ========== 1.创建连接 ==========
+	mq := util.NewRabbitMQ()
+	defer mq.Close()
+	mqCh := mq.Channel
+
+	// # ========== 2.设置队列（队列、交换机、绑定） ==========
+	// 声明队列
+	var err error
+	_, err = mqCh.QueueDeclare(NormalQueue, true, false, false, false, amqp.Table{
+		"x-message-ttl":             1800000,        // 消息过期时间（队列级别）,毫秒, 默认30分钟过期
+		"x-dead-letter-exchange":    DeadExchange,   // 指定死信交换机
+		"x-dead-letter-routing-key": DeadRoutingKey, // 指定死信routing-key
+	})
+	util.FailOnError(err, "创建normal队列失败")
+
+	// 声明交换机
+	err = mqCh.ExchangeDeclare(NormalExchange, amqp.ExchangeDirect, true, false, false, false, nil)
+	util.FailOnError(err, "创建normal交换机失败")
+
+	// 队列绑定（将队列、routing-key、交换机三者绑定到一起）
+	err = mqCh.QueueBind(NormalQueue, NormalRoutingKey, NormalExchange, false, nil)
+	util.FailOnError(err, "normal：队列、交换机、routing-key 绑定失败")
+
+	// # ========== 3.设置死信队列（队列、交换机、绑定） ==========
+	// 声明死信队列
+	// args 为 nil。切记不要给死信队列设置消息过期时间,否则失效的消息进入死信队列后会再次过期。
+	_, err = mqCh.QueueDeclare(DeadQueue, true, false, false, false, nil)
+	util.FailOnError(err, "创建dead队列失败")
+
+	// 声明交换机
+	err = mqCh.ExchangeDeclare(DeadExchange, amqp.ExchangeDirect, true, false, false, false, nil)
+	util.FailOnError(err, "创建dead队列失败")
+
+	// 队列绑定（将队列、routing-key、交换机三者绑定到一起）
+	err = mqCh.QueueBind(DeadQueue, DeadRoutingKey, DeadExchange, false, nil)
+	util.FailOnError(err, "dead：队列、交换机、routing-key 绑定失败")
+
+	go func() {
+		// # ========== 2.消费死信消息 ==========
+		msgsCh, err := mqCh.Consume(DeadQueue, "", false, false, false, false, nil)
+		util.FailOnError(err, "消费dead队列失败")
+		for d := range msgsCh {
+			// 要实现的逻辑
+			log.Printf("死信队列 ---> 消费消息: %s", d.Body)
+
+			// 手动应答
+			d.Ack(false)
+			//d.Reject(true)
+		}
+	}()
+	for i := 2000; i < 3000; i++ {
+		var timeData = time.Now()
+		var message = map[string]interface{}{
+			"id":            i,
+			"created_at":    timeData.Format("2006-01-02 15:04:05"),
+			"expiration_at": timeData.Add(30 * time.Second).Format("2006-01-02 15:04:05"),
+		}
+
+		var byteData, _ = json.Marshal(message)
+		// # ========== 4.发布消息 ==========
+		err = mqCh.Publish(NormalExchange, NormalRoutingKey, false, false,
+			amqp.Publishing{
+				ContentType: "text/plain",
+				Body:        byteData,
+				Expiration:  "30000", // 消息过期时间,毫秒 30秒过期
+
+			})
+		util.FailOnError(err, "消息发布失败")
+
+		<-time.After(time.Second * 8)
+	}
+
+	var a = make(chan bool)
+	<-a
+}
