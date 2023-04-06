@@ -225,3 +225,42 @@ func handle(conn net.Conn) {
 
 https://studygolang.com/articles/25278
 https://cloud.tencent.com/developer/article/1801065
+
+
+for i, body := range bodies {
+			var header = make([]byte, 8)
+			var message []byte
+			binary.LittleEndian.PutUint32(header[:4], uint32(jj))        // 设置协议号
+			binary.LittleEndian.PutUint32(header[4:], uint32(len(body))) // 设置消息体长度
+			message = append(header, []byte(body)...)
+			if _, err = conn.Write(message); err != nil {
+				fmt.Println("数据发送失败：", err)
+			}
+			fmt.Printf("发送协议号 %d, 数据: %s\n", i+1, body)
+		}
+
+
+// -----------------------
+
+for {
+		// 读取包头
+		var header = make([]byte, 8)
+		if _, err := io.ReadFull(conn, header); err != nil {
+			fmt.Println("读取包头失败: ", err)
+			return
+		}
+
+		var protoId = binary.LittleEndian.Uint32(header[:4])
+		var dataLen = binary.LittleEndian.Uint32(header[4:])
+
+		// 读取数据
+		var body = make([]byte, dataLen)
+		if _, err := io.ReadFull(conn, body); err != nil {
+			fmt.Println("读取数据失败: ", err)
+			return
+		}
+
+		// 处理协议体数据
+		fmt.Printf("收到协议号 %d, 数据: %s\n", protoId, body)
+	}
+
